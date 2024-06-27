@@ -1,0 +1,330 @@
+--- 
+title: "Food Supply Changes in Kilocalories from 1961 to 2018"
+author: "Buntubethu Sydney Malunga"
+format: 
+  dashboard:
+    logo: images/LOGO_IMAGE.png
+    nav-buttons: [github]
+    github: https://github.com/buntumalunga
+theme: united
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+# Load Packages
+
+# Check if the 'pacman' package is already installed; if not, install it
+if (!require(pacman)) install.packages("pacman")
+
+# Load necessary packages using 'pacman::p_load'
+pacman::p_load(
+  # project and file management
+  here,             # for managing file paths relative to R project
+  
+  # general data management
+  tidyverse,         # for data manipulation and visualization
+  visdat,            # for checking data types
+  inspectdf,         # for inspecting categorical and numerical variables
+  
+  # statistics
+  janitor,           # for cleaning tables and data
+  gtsummary,         # for creating descriptive and statistical tables
+  
+  # plots
+  ggrepel,           # for smart labels in plots
+  plotly,            # for interactive graphics
+  gganimate,         # for creating animated graphics
+  
+  # dashboard
+  bslib,             # for Bootstrap-themed HTML templates
+  bsicons,           # for Bootstrap icons
+  shiny,             # for creating interactive web applications
+  rgeoboundaries,    # for geographic boundary data
+  
+  htmltools,         # for HTML generation and manipulation
+  reactable,         # for interactive tables in Shiny applications
+  gapminder,         # for data on global development
+  
+  countrycode,       # for converting country codes into ISO codes
+  
+  # maps
+  sf,                # for spatial data operations
+  ggspatial,         # for spatial visualization in ggplot2
+  rnaturalearth      # for natural earth data for maps
+)
+
+
+#import files
+food_supply <- read_csv(here("data/food_supply_kilocalories_per_person_and_day.csv")) %>% #standardize column names 
+distinct() #de-duplicate - examines every row and removes duplicate
+
+my_palette <- c("#0f1e37", "black", "#CC5500", "#e24c2c")
+
+
+```
+
+```{r}
+
+# Data Cleaning
+
+#pivot from wide to long
+
+food_supply_long <- food_supply %>% 
+  pivot_longer(cols = 2:59,
+               names_to = "year",
+               values_to = "kilocalories_per_person_day",
+               values_drop_na = TRUE
+  ) %>% 
+  mutate(year = as.numeric(year))
+
+#joining data sets with gapminder country
+
+country_metadata <- read_csv(here("data/Data Geographies - v2 - by Gapminder - list-of-countries-etc.csv"))
+
+# Adding population data
+
+# standardize country names to match iso codes
+
+foodsupply_iso <- food_supply_long %>% 
+  mutate(country_iso = countrycode(country, 
+                                   "country.name", 
+                                   "iso3c")) 
+
+country_metadata_iso <- country_metadata %>% 
+  mutate(country_iso = countrycode(name, 
+                                   "country.name", 
+                                   "iso3c")) %>% 
+  rename(country = name)
+
+#joining the two datasets
+
+food_supply_combined <- inner_join(foodsupply_iso, country_metadata_iso, by = c("country", "country_iso")) %>% 
+  drop_na(kilocalories_per_person_day) #remove any missing values
+
+
+
+```
+
+``` {r}
+
+#table - calculating the absolute and relative change from 1961 - 2018
+
+food_supply_data <- food_supply_combined %>%
+  #filter for year 1961 and 2018
+  filter(year %in% c(2018, 1961)) %>% 
+  #pivot from long to wide
+  pivot_wider(names_from = year, values_from = kilocalories_per_person_day, id_cols = country) %>% 
+  #calculate absolute and relative change 
+  mutate(`Absolute change` = `2018` - `1961`,
+         `Relative change` = (`2018` - `1961`) / `1961`) %>% 
+  # include search, filtering and sorting for the columns
+  reactable(
+    defaultSorted = "country",  #default sort by country ascending
+    sortable = TRUE,  #enable sorting for all columns
+    searchable = TRUE,  #enable searching/filtering
+    columns = list(
+      `1961` = colDef(align = "center"),
+      `2018` = colDef(align = "center"),
+      `Absolute change` = colDef(align = "center"),
+      `Relative change` = colDef(align = "center", format = colFormat(percent = TRUE, digits = 1))
+    )
+  )
+
+#calculating values for value box
+
+absolute_changes <- food_supply_combined %>%
+  filter(year %in% c(2018, 1961)) %>% 
+  pivot_wider(names_from = year, values_from = kilocalories_per_person_day, id_cols = country) %>% 
+  mutate(`Absolute change` = `2018` - `1961`) %>% 
+  # na.rm - to not include rows with missing values
+  summarise(max_absolute_change = max(`Absolute change`, na.rm = TRUE),
+            min_absolute_change = min(`Absolute change`, na.rm = TRUE))
+
+relative_changes <- food_supply_combined %>%
+  filter(year %in% c(2018, 1961)) %>% 
+  pivot_wider(names_from = year, values_from = kilocalories_per_person_day, id_cols = country) %>% 
+  mutate(`Relative change` = (`2018` - `1961`) / `1961`) %>% 
+  # na.rm - to not include rows with missing values
+  summarise(max_relative_change = max(`Relative change`, na.rm = TRUE),
+            min_relative_change = min(`Relative change`, na.rm = TRUE))
+
+max_absolute_change <- absolute_changes %>% 
+  select(max_absolute_change) %>% 
+  #include kcal unit
+  mutate(max_absolute_change = paste0(max_absolute_change, " kcal"))
+
+max_relative_change <- relative_changes %>% 
+  select(max_relative_change) %>% 
+  #include percent symbol % and round to 2 decimal places
+  mutate(max_relative_change = paste0(round(max_relative_change*100, 2), "%"))
+
+
+```
+
+``` {r}
+
+#Line Charts
+
+#line chart from 1961 showing the kilocalorie supply
+food_supply_combined_plot <- food_supply_combined %>%
+  #group by four regions - africa, america, asia and europe
+  group_by(four_regions, year) %>%
+  #calculate the total kilocalories for each region per year and use na.rm to not include missing values
+  summarise(total_kilocalories = sum(kilocalories_per_person_day, na.rm = TRUE)) %>% 
+  ggplot(mapping = aes(x = year,
+                       y = total_kilocalories,
+                       color = four_regions,
+                       frame = year, #to include a slider which plays from 1961 to 2018
+                       #text labels
+                       text = paste("Region:", four_regions, "<br>",
+                                    "Total Kilocalories:", total_kilocalories, "kcal"))) +
+  geom_point() +  # Scatter plot of points
+  geom_line() +    # Connect points with lines
+  labs(x = "Year", y = "Total Kilocalories", color = "Region") +
+  scale_color_manual(values = my_palette) +
+  theme_minimal() +
+  ggtitle("Total Kilocalories by Region Over Years") +
+  theme(legend.position = "right")
+
+
+  # Convert ggplot to plotly object for interactivity
+food_supply_ggplotly <- ggplotly(food_supply_combined_plot, tooltip = "text")
+
+
+```
+
+```{r}
+#maps
+
+#to get country polygons
+world <- ne_countries(returnclass = "sf")
+
+food_supply_country <- food_supply_combined %>%
+  group_by(country, year) %>%
+  summarise(total_kilocalories = sum(kilocalories_per_person_day, na.rm = TRUE))
+
+#join world data and food supply data
+world_food_combined <- left_join(world,
+             food_supply_country,
+             by = c("admin" = "country")) %>% 
+    mutate(tooltip_label = paste0(admin, ": ", total_kilocalories, " kcal "))
+
+#food supply world map 1961
+world_map_1961 <- world_food_combined %>% 
+  filter(year == 1961) %>% 
+  ggplot(frame = year)+
+  geom_sf(aes(fill = total_kilocalories, text = tooltip_label), color = "white")+
+  scale_fill_gradient(low = "#FFAA33", high = "#e24c2c", name = "Per capita kilocalorie supply") +  # Adjust color scale as needed 
+  labs(title = "Food Supply in kilocalories in 1961", fill = "Total Kilocalories")+
+  theme_minimal() +
+   guides(fill = guide_legend(reverse = TRUE))
+
+
+#food supply world map 2018
+world_map_2018 <- world_food_combined %>% 
+  filter(year == 2018) %>% 
+  ggplot(frame = year)+
+  geom_sf(aes(fill = total_kilocalories, text = tooltip_label), color = "white")+
+  #Colour Scale
+  scale_fill_gradient(low = "#FFAA33", high = "#e24c2c", name = "Per capita kilocalorie supply")+  
+  labs(title = "Food Supply in kilocalories in 2018", fill = "Total Kilocalories")+
+  theme_minimal() +
+   guides(fill = guide_legend(reverse = TRUE))
+
+#interactive plot for world map 1961
+world_map_1961_plotly <- ggplotly(world_map_1961, tooltip = "text", dynamicTicks = TRUE) %>% 
+  animation_opts(frame = 1000, transition = 500, redraw = FALSE)  # Animation options
+
+#interactive plot for world map 2018
+world_map_2018_plotly <- ggplotly(world_map_2018, tooltip = "text", dynamicTicks = TRUE) %>% 
+  animation_opts(frame = 1000, transition = 500, redraw = FALSE) 
+
+``` 
+
+# About
+
+According to Food and Agriculture Organization (FAO), there has been a significant rise in the per capita supply due to the changes and advancement in food production, distribution and consumption patterns globally from 1961 to 2018. The caloric supply is a key metric that is used to evaluate food supply for each individual. 
+
+```{r title = "Per capita kilocalorie supply from all foods per day from 1961 to 2021"}
+
+food_supply_ggplotly
+
+```
+
+# Map
+
+## Row 2 {height = 75%}
+
+### width {width = 70%}
+``` {r title = "Per capita kilocalorie supply from all foods per day (1961)"}
+
+world_map_1961_plotly
+
+```
+### width {width = 30%}
+
+``` {r title = "Per capita kilocalorie supply from all foods per day (2018)"}
+
+world_map_2018_plotly
+
+```
+
+# Summary
+
+## Row 1 {height = 15%}
+
+```{r}
+#value box for max absolute change
+
+value_box(
+  title = "The maximum absolute change from 1961 to 2018",
+  value = max_absolute_change,
+  showcase = bsicons::bs_icon("arrow-down-up"),
+  theme = value_box_theme(bg = "#CC5500"))
+
+```
+
+```{r}
+#value box for max relative change
+
+value_box(
+  title = "The maximum relative change from 1961 to 2018",
+  value = max_relative_change,
+  showcase = bsicons::bs_icon("arrow-down-up"),
+  theme = value_box_theme(bg = "#f7f4eb"))
+
+```
+## Row 2 {height = 85%}
+
+### {width = 70%}
+
+```{r Food Supply Data Table}
+food_supply_data
+``` 
+
+
+# Download Data
+
+The data used for the dashboard and visualizations is shown below and can be downloaded as a CSV.
+
+```{r}
+# Load packages 
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(htmltools, reactable)
+
+htmltools::browsable(
+  tagList(
+    reactable(food_supply_combined, 
+              elementId = "food_supply_table-table", 
+              searchable = T, 
+              filterable = T), 
+    
+tags$button("Download as CSV", 
+            onclick = "Reactable.downloadDataCSV('food_supply_table')")
+  )
+)
+
+```
