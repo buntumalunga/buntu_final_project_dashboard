@@ -189,6 +189,9 @@ food_supply_combined_plot <- food_supply_combined %>%
   ggtitle("Total Kilocalories by Region Over Years") +
   theme(legend.position = "right")
 
+#save plot
+ggsave(filename = here("images", "food_supply_linechart.png"), plot = food_supply_combined_plot)
+
 
   # Convert ggplot to plotly object for interactivity
 food_supply_ggplotly <- ggplotly(food_supply_combined_plot, tooltip = "text")
@@ -222,6 +225,9 @@ world_map_1961 <- world_food_combined %>%
   theme_minimal() +
    guides(fill = guide_legend(reverse = TRUE))
 
+#save world map 1961 plot
+ggsave(filename = here("images", "world_map_1961.png"), plot = world_map_1961)
+
 
 #food supply world map 2018
 world_map_2018 <- world_food_combined %>% 
@@ -233,6 +239,9 @@ world_map_2018 <- world_food_combined %>%
   labs(title = "Food Supply in kilocalories in 2018", fill = "Total Kilocalories")+
   theme_minimal() +
    guides(fill = guide_legend(reverse = TRUE))
+
+#save world map 2018 plot
+ggsave(filename = here("images", "world_map_2018.png"), plot = world_map_2018)
 
 #interactive plot for world map 1961
 world_map_1961_plotly <- ggplotly(world_map_1961, tooltip = "text", dynamicTicks = TRUE) %>% 
